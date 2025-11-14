@@ -1,0 +1,148 @@
+-- SBK HUB Fly adaptado para MOBILE (move com joystick, sobe/desce com botões)
+local player = game.Players.LocalPlayer
+local runservice = game:GetService("RunService")
+local gui = Instance.new("ScreenGui")
+gui.Name = "SBK_HUB_GUI"
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local emojiBtn = Instance.new("TextButton")
+emojiBtn.Parent = gui
+emojiBtn.Size = UDim2.new(0,60,0,60)
+emojiBtn.Position = UDim2.new(0,15,0,15)
+emojiBtn.Font = Enum.Font.SourceSansBold
+emojiBtn.TextSize = 42
+emojiBtn.Text = "🍿"
+emojiBtn.BackgroundColor3 = Color3.fromRGB(42, 42, 54)
+emojiBtn.TextColor3 = Color3.new(1,1,1)
+emojiBtn.BorderSizePixel = 0
+emojiBtn.Visible = true
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Parent = gui
+mainFrame.Size = UDim2.new(0,250,0,180)
+mainFrame.Position = UDim2.new(0,90,0,40)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25,25,28)
+mainFrame.Visible = false
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+
+local title = Instance.new("TextLabel")
+title.Parent = mainFrame
+title.Size = UDim2.new(1,0,0,40)
+title.Position = UDim2.new(0,0,0,0)
+title.BackgroundTransparency = 1
+title.Text = "SBK HUB"
+title.TextColor3 = Color3.fromRGB(0, 255, 170)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 26
+
+local flyBtn = Instance.new("TextButton")
+flyBtn.Parent = mainFrame
+flyBtn.Size = UDim2.new(0.8,0,0,38)
+flyBtn.Position = UDim2.new(0.1,0,0.4,0)
+flyBtn.BackgroundColor3 = Color3.fromRGB(34,34,80)
+flyBtn.TextColor3 = Color3.new(1,1,1)
+flyBtn.Font = Enum.Font.GothamBold
+flyBtn.TextSize = 18
+flyBtn.Text = "Ativar Fly"
+flyBtn.BorderSizePixel = 0
+
+-- Botão subir
+local upBtn = Instance.new("TextButton")
+upBtn.Parent = mainFrame
+upBtn.Size = UDim2.new(0.35,0,0,36)
+upBtn.Position = UDim2.new(0.1,0,0.7,0)
+upBtn.BackgroundColor3 = Color3.fromRGB(44,154,195)
+upBtn.TextColor3 = Color3.new(1,1,1)
+upBtn.Font = Enum.Font.GothamBlack
+upBtn.TextSize = 22
+upBtn.Text = "↑"
+upBtn.BorderSizePixel = 0
+upBtn.Visible = false
+
+-- Botão descer
+local downBtn = Instance.new("TextButton")
+downBtn.Parent = mainFrame
+downBtn.Size = UDim2.new(0.35,0,0,36)
+downBtn.Position = UDim2.new(0.55,0,0.7,0)
+downBtn.BackgroundColor3 = Color3.fromRGB(44,154,195)
+downBtn.TextColor3 = Color3.new(1,1,1)
+downBtn.Font = Enum.Font.GothamBlack
+downBtn.TextSize = 22
+downBtn.Text = "↓"
+downBtn.BorderSizePixel = 0
+downBtn.Visible = false
+
+-- Fly logic para mobile
+local flying = false
+local connection, bv
+local vertical = 0
+
+function safeFlyMobile()
+    if flying then return end
+    flying = true
+    vertical = 0
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    local hum = char:WaitForChild("Humanoid")
+    bv = Instance.new("BodyVelocity")
+    bv.Parent = hrp
+    bv.MaxForce = Vector3.new(2e5,2e5,2e5)
+    bv.Velocity = Vector3.new(0,0,0)
+
+    connection = runservice.RenderStepped:Connect(function()
+        if flying and bv and hrp and hum then
+            -- Usa MoveDirection do humanoid (joystick) + vertical dos botões
+            local move = (hum.MoveDirection * 15) + Vector3.new(0,vertical,0)
+            bv.Velocity = move
+        end
+    end)
+    flyBtn.Text = "Desativar Fly"
+    upBtn.Visible = true
+    downBtn.Visible = true
+end
+
+function endFlyMobile()
+    flying = false
+    vertical = 0
+    if bv then
+        bv:Destroy()
+        bv = nil
+    end
+    if connection then
+        connection:Disconnect()
+        connection = nil
+    end
+    flyBtn.Text = "Ativar Fly"
+    upBtn.Visible = false
+    downBtn.Visible = false
+end
+
+flyBtn.MouseButton1Click:Connect(function()
+    if not flying then
+        safeFlyMobile()
+    else
+        endFlyMobile()
+    end
+end)
+
+emojiBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+end)
+
+-- Botão ↑: ajuste vertical para subir
+upBtn.MouseButton1Down:Connect(function()
+    vertical = 8
+end)
+upBtn.MouseButton1Up:Connect(function()
+    vertical = 0
+end)
+
+-- Botão ↓: ajuste vertical para descer
+downBtn.MouseButton1Down:Connect(function()
+    vertical = -8
+end)
+downBtn.MouseButton1Up:Connect(function()
+    vertical = 0
+end)
