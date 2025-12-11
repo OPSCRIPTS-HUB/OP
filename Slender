@@ -1,0 +1,405 @@
+-- Slender Hub (Delta-friendly) - GUI arrastável pelas bordas, Save/Ir (teleport rápido),
+-- toggle noclip, ajusta ProximityPrompt para 0.1s e UI visual aprimorada.
+-- Comentários em português. Projetado para melhor compatibilidade com executores (Delta, Synapse, etc.).
+-- Uso: cole como LocalScript em executor. Não inclua tokens ou dados sensíveis.
+
+-- == Serviços ==
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+repeat wait() until player
+
+-- == Configurações ==
+local PROX_HOLD = 0.1            -- tempo desejado para ProximityPrompt.HoldDuration
+local BORDER_THICKNESS = 8       -- px, área para iniciar arraste (bordas)
+local DRAG_SNAP = false          -- se true, usa Tween para suavizar (pode desligar para máxima compat)
+local DRAG_TWEEN_TIME = 0.06
+
+-- == Helpers de compatibilidade com executores (Delta etc.) ==
+local function tryProtectGui(gui)
+	-- tenta usar proteções/exposições comuns de executores sem falhar
+	pcall(function()
+		-- syn.protect_gui
+		if type(syn) == "table" and type(syn.protect_gui) == "function" then
+			syn.protect_gui(gui)
+		end
+	end)
+end
+
+local function safeParentGui(gui)
+	-- tenta várias estratégias em ordem razoável
+	-- 1) PlayerGui
+	if pcall(function() gui.Parent = player:FindFirstChild("PlayerGui") end) and gui.Parent then
+		return true
+	end
+	-- 2) gethui (alguns executores)
+	if type(gethui) == "function" then
+		pcall(function() gui.Parent = gethui() end)
+		if gui.Parent then return true end
+	end
+	-- 3) tentar proteger e parentar em CoreGui (se executor permite)
+	tryProtectGui(gui)
+	if pcall(function() gui.Parent = game:GetService("CoreGui") end) and gui.Parent then
+		return true
+	end
+	-- 4) esperar PlayerGui (fallback)
+	local ok = pcall(function()
+		local pg = player:WaitForChild("PlayerGui", 5)
+		if pg then gui.Parent = pg end
+	end)
+	return gui.Parent ~= nil
+end
+
+-- == Criar GUI ==
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Slender_Hub"
+ScreenGui.ResetOnSpawn = false
+
+-- Container principal
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 320, 0, 170)
+Main.Position = UDim2.new(0.68, 0, 0.28, 0)
+Main.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+Main.BorderSizePixel = 0
+Main.AnchorPoint = Vector2.new(0, 0)
+Main.Active = true
+Main.Parent = ScreenGui
+
+-- Visuals: sombra, canto arredondado, stroke, gradiente no topo
+local UICorner_main = Instance.new("UICorner", Main)
+UICorner_main.CornerRadius = UDim.new(0, 10)
+
+local stroke = Instance.new("UIStroke", Main)
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(0, 255, 234)
+stroke.Transparency = 0.85
+
+local topBar = Instance.new("Frame", Main)
+topBar.Size = UDim2.new(1, 0, 0, 36)
+topBar.Position = UDim2.new(0, 0, 0, 0)
+topBar.BackgroundTransparency = 1
+
+local title = Instance.new("TextLabel", topBar)
+title.Size = UDim2.new(1, -12, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Slender Hub"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
+title.TextColor3 = Color3.fromRGB(230, 230, 230)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.RichText = false
+
+local owner = Instance.new("TextLabel", topBar)
+owner.Size = UDim2.new(1, -12, 1, 0)
+owner.Position = UDim2.new(0, 12, 0, 18)
+owner.BackgroundTransparency = 1
+owner.Text = "Owner: Thiagocag23"
+owner.Font = Enum.Font.Gotham
+owner.TextSize = 12
+owner.TextColor3 = Color3.fromRGB(0, 255, 234)
+owner.TextXAlignment = Enum.TextXAlignment.Left
+
+local status = Instance.new("TextLabel", Main)
+status.Name = "Status"
+status.Size = UDim2.new(1, -24, 0, 20)
+status.Position = UDim2.new(0, 12, 0, 58)
+status.BackgroundTransparency = 1
+status.Text = "Pronto"
+status.Font = Enum.Font.Gotham
+status.TextSize = 13
+status.TextColor3 = Color3.fromRGB(200, 200, 200)
+status.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Buttons container
+local Buttons = Instance.new("Frame", Main)
+Buttons.Size = UDim2.new(1, -24, 0, 68)
+Buttons.Position = UDim2.new(0, 12, 0, 84)
+Buttons.BackgroundTransparency = 1
+
+-- Botões estilizados
+local function createButton(text, posX)
+	local b = Instance.new("TextButton")
+	b.Parent = Buttons
+	b.Size = UDim2.new(0, 140, 0, 44)
+	b.Position = UDim2.new(0, posX, 0, 0)
+	b.BackgroundColor3 = Color3.fromRGB(34, 34, 38)
+	b.BorderSizePixel = 0
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 15
+	b.Text = text
+	b.TextColor3 = Color3.fromRGB(240, 240, 240)
+	b.AutoButtonColor = true
+	local corner = Instance.new("UICorner", b)
+	corner.CornerRadius = UDim.new(0, 8)
+	-- subtle stroke
+	local s = Instance.new("UIStroke", b)
+	s.Thickness = 1.5
+	s.Color = Color3.fromRGB(40, 40, 40)
+	return b
+end
+
+local saveBtn = createButton("Salvar Posição", 0)
+local irBtn   = createButton("Ir (Teleport)", 0.5)
+local noclipBtn = createButton("Noclip: OFF", 0)                noclipBtn.Position = UDim2.new(0, 0, 0, 52)
+local proxToggleBtn = createButton("Prox: 0.1s (ON)", 0.5)     proxToggleBtn.Position = UDim2.new(0, 160, 0, 52)
+
+-- Pequeno separador estético
+local sep = Instance.new("Frame", Main)
+sep.Size = UDim2.new(1, -24, 0, 1)
+sep.Position = UDim2.new(0, 12, 0, 76)
+sep.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+sep.BorderSizePixel = 0
+
+-- Try parent the GUI safely
+if not safeParentGui(ScreenGui) then
+	-- última tentativa direta em PlayerGui (pode falhar dependendo do executor)
+	pcall(function() ScreenGui.Parent = player:WaitForChild("PlayerGui") end)
+end
+
+-- == Estado e variáveis ==
+local savedCFrame = nil
+local teleportDebounce = false
+local noclipEnabled = false
+local noclipConn = nil
+local proxEnabled = true
+
+-- == Funções utilitárias ==
+local function getRootPart()
+	local char = player.Character
+	if not char then return nil end
+	return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+end
+
+local function setStatus(txt)
+	pcall(function() status.Text = tostring(txt) end)
+end
+
+-- == Arrastar apenas pelas bordas ==
+local dragging = false
+local dragStart = Vector2.new()
+local startPos = Main.Position
+
+local function isInBorder(pos)
+	local ok1, absPos = pcall(function() return Main.AbsolutePosition end)
+	local ok2, absSize = pcall(function() return Main.AbsoluteSize end)
+	if not ok1 or not ok2 then return false end
+	local localPos = pos - absPos
+	if localPos.X < 0 or localPos.Y < 0 then return false end
+	if localPos.X <= BORDER_THICKNESS or localPos.X >= (absSize.X - BORDER_THICKNESS)
+	or localPos.Y <= BORDER_THICKNESS or localPos.Y >= (absSize.Y - BORDER_THICKNESS) then
+		return true
+	end
+	return false
+end
+
+Main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		local ok, pos = pcall(function() return input.Position end)
+		if not ok or not pos then return end
+		if isInBorder(pos) then
+			dragging = true
+			dragStart = pos
+			startPos = Main.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end
+end)
+
+Main.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local ok, pos = pcall(function() return input.Position end)
+		if not ok or not pos then return end
+		local delta = pos - dragStart
+		local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		if DRAG_SNAP then
+			pcall(function()
+				game:GetService("TweenService"):Create(Main, TweenInfo.new(DRAG_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = newPos}):Play()
+			end)
+		else
+			Main.Position = newPos
+		end
+	end
+end)
+
+-- == Save / Teleport ==
+saveBtn.Activated:Connect(function()
+	local root = getRootPart()
+	if not root then
+		setStatus("Erro: personagem não encontrado")
+		return
+	end
+	savedCFrame = root.CFrame
+	irBtn.Active = true
+	setStatus("Posição salva")
+end)
+
+irBtn.Active = false
+irBtn.TextTransparency = 0.4
+irBtn.Activated:Connect(function()
+	if not irBtn.Active then return end
+	if teleportDebounce then return end
+	if not savedCFrame then
+		setStatus("Nenhuma posição salva")
+		return
+	end
+	local root = getRootPart()
+	if not root then
+		setStatus("Erro: personagem não encontrado")
+		return
+	end
+	teleportDebounce = true
+	setStatus("Teleportando...")
+	local ok, err = pcall(function()
+		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = true end
+		-- offset para evitar colidir com chão
+		local target = savedCFrame + Vector3.new(0, 3, 0)
+		if root and root:IsA("BasePart") then
+			root.CFrame = target
+			pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+			pcall(function() if root.AssemblyLinearVelocity then root.AssemblyLinearVelocity = Vector3.new(0,0,0) end end)
+		end
+		delay(0.1, function() if humanoid then humanoid.PlatformStand = false end end)
+	end)
+	if not ok then
+		setStatus("Erro ao teleportar: " .. tostring(err))
+	else
+		setStatus("Teleport concluído")
+	end
+	wait(0.25)
+	teleportDebounce = false
+end)
+
+-- == Noclip toggle ==
+local function enableNoclip()
+	if noclipConn then return end
+	noclipEnabled = true
+	noclipConn = RunService.Stepped:Connect(function()
+		local char = player.Character
+		if not char then return end
+		for _, part in ipairs(char:GetDescendants()) do
+			if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+				pcall(function() part.CanCollide = false end)
+			end
+		end
+	end)
+	noclipBtn.Text = "Noclip: ON"
+	setStatus("Noclip ativado")
+end
+
+local function disableNoclip()
+	if noclipConn then
+		pcall(function() noclipConn:Disconnect() end)
+		noclipConn = nil
+	end
+	noclipEnabled = false
+	-- Tentativa de restaurar colisões
+	local char = player.Character
+	if char then
+		for _, part in ipairs(char:GetDescendants()) do
+			if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+				pcall(function() part.CanCollide = true end)
+			end
+		end
+	end
+	noclipBtn.Text = "Noclip: OFF"
+	setStatus("Noclip desativado")
+end
+
+-- toggle por botão e também por tecla N
+noclipBtn.Activated:Connect(function()
+	if noclipEnabled then disableNoclip() else enableNoclip() end
+end)
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		if input.KeyCode == Enum.KeyCode.N then
+			if noclipEnabled then disableNoclip() else enableNoclip() end
+		end
+	end
+end)
+
+-- == ProximityPrompt: set HoldDuration para PROX_HOLD em todos os prompts ==
+local function setPromptHold(prompt)
+	if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+	local ok = pcall(function() prompt.HoldDuration = PROX_HOLD end)
+	return ok
+end
+
+local function applyToAllPrompts()
+	for _, obj in ipairs(game:GetDescendants()) do
+		if obj:IsA("ProximityPrompt") then
+			setPromptHold(obj)
+		end
+	end
+end
+
+-- aplica algumas vezes no início (ajuda se o jogo criar prompts depois)
+spawn(function()
+	for i = 1, 6 do
+		pcall(applyToAllPrompts)
+		wait(0.5)
+	end
+end)
+
+game.DescendantAdded:Connect(function(desc)
+	-- tentar ajustar quando um novo prompt for adicionado (com retry curto)
+	if desc:IsA("ProximityPrompt") then
+		spawn(function()
+			for i = 1, 6 do
+				if setPromptHold(desc) then break end
+				wait(0.08)
+			end
+		end)
+	end
+end)
+
+-- Toggle de ativação da modificação de ProximityPrompts
+proxToggleBtn.Activated:Connect(function()
+	proxEnabled = not proxEnabled
+	if proxEnabled then
+		proxToggleBtn.Text = "Prox: 0.1s (ON)"
+		setStatus("Aplicando ProximityPrompts = 0.1s")
+		pcall(applyToAllPrompts)
+	else
+		proxToggleBtn.Text = "Prox: original (OFF)"
+		setStatus("ProximityPrompts: função desligada")
+		-- note: não tentamos restaurar valores originais (não há forma universal)
+	end
+end)
+
+-- == Character / cleanup handlers ==
+player.CharacterAdded:Connect(function(char)
+	-- reenforce noclip se estava ligado
+	if noclipEnabled then
+		disableNoclip()
+		enableNoclip()
+	end
+end)
+
+player.AncestryChanged:Connect(function(_, parent)
+	if not parent then
+		-- cleanup
+		if noclipConn then pcall(function() noclipConn:Disconnect() end) end
+	end
+end)
+
+-- Mensagem inicial
+setStatus("Ready - Press N or use botão Noclip - ProximityPrompts = 0.1s")
+
+-- Fim do script
