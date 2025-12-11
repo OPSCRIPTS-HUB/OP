@@ -1,0 +1,414 @@
+-- Slender Hub (Delta-friendly) - Versão final solicitada
+-- Características:
+-- - Sem noclip
+-- - Botão único "Salvar / Ir" (primeiro salva, depois teleporta)
+-- - GUI centralizada ao abrir
+-- - Arrastar apenas pelas bordas
+-- - Botão "X" no canto esquerdo para fechar
+-- - Emoji 😹 visível para abrir a GUI
+-- - Ajusta ProximityPrompt.HoldDuration = 0.1s em todo o jogo (com retries)
+-- - Compatibilidade melhorada com executores como Delta (safeParentGui, pcall, gethui/syn.protect_gui)
+-- Cole esse script como LocalScript no seu executor.
+
+-- Serviços
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+repeat wait() until player
+
+-- Configurações
+local PROX_HOLD = 0.1
+local BORDER_THICKNESS = 8
+local GUI_WIDTH, GUI_HEIGHT = 340, 180
+local DRAG_TWEEN = false -- toggle tween ao arrastar (false por compatibilidade máxima)
+local DRAG_TWEEN_TIME = 0.06
+
+-- Helpers para compatibilidade com executores
+local function tryProtectGui(gui)
+	pcall(function()
+		if type(syn) == "table" and type(syn.protect_gui) == "function" then
+			syn.protect_gui(gui)
+		end
+	end)
+end
+
+local function safeParentGui(gui)
+	-- tenta PlayerGui primeiro
+	local ok = pcall(function()
+		local pg = player:FindFirstChild("PlayerGui")
+		if pg then gui.Parent = pg end
+	end)
+	if ok and gui.Parent then return true end
+
+	-- tenta gethui (alguns executores)
+	if type(gethui) == "function" then
+		pcall(function() gui.Parent = gethui() end)
+		if gui.Parent then return true end
+	end
+
+	-- tenta proteger e parentar no CoreGui
+	tryProtectGui(gui)
+	pcall(function() gui.Parent = game:GetService("CoreGui") end)
+	if gui.Parent then return true end
+
+	-- fallback: esperar PlayerGui por alguns segundos
+	pcall(function()
+		local pg = player:WaitForChild("PlayerGui", 5)
+		if pg then gui.Parent = pg end
+	end)
+	return gui.Parent ~= nil
+end
+
+-- Criação da GUI (sem parent inicialmente)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Slender_Hub"
+ScreenGui.ResetOnSpawn = false
+
+-- Main frame (janela)
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.fromOffset(GUI_WIDTH, GUI_HEIGHT)
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Visible = false -- inicia fechada (emoji abre)
+Main.Parent = ScreenGui
+
+local UICorner_main = Instance.new("UICorner", Main)
+UICorner_main.CornerRadius = UDim.new(0, 12)
+
+local stroke = Instance.new("UIStroke", Main)
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(0, 255, 234)
+stroke.Transparency = 0.85
+
+-- TopBar (título)
+local topBar = Instance.new("Frame", Main)
+topBar.Size = UDim2.new(1, 0, 0, 36)
+topBar.Position = UDim2.new(0, 0, 0, 0)
+topBar.BackgroundTransparency = 1
+
+local title = Instance.new("TextLabel", topBar)
+title.Size = UDim2.new(1, -44, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Slender Hub"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
+title.TextColor3 = Color3.fromRGB(230, 230, 230)
+title.TextXAlignment = Enum.TextXAlignment.Left
+
+local owner = Instance.new("TextLabel", topBar)
+owner.Size = UDim2.new(1, -44, 1, 0)
+owner.Position = UDim2.new(0, 12, 0, 18)
+owner.BackgroundTransparency = 1
+owner.Text = "Owner: Thiagocag23"
+owner.Font = Enum.Font.Gotham
+owner.TextSize = 12
+owner.TextColor3 = Color3.fromRGB(0, 255, 234)
+owner.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Botão X (canto esquerdo)
+local closeBtn = Instance.new("TextButton", Main)
+closeBtn.Size = UDim2.fromOffset(34, 28)
+closeBtn.Position = UDim2.new(0, 8, 0, 6)
+closeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+closeBtn.BorderSizePixel = 0
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Text = "X"
+closeBtn.TextSize = 16
+closeBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+closeBtn.AutoButtonColor = true
+local closeCorner = Instance.new("UICorner", closeBtn)
+closeCorner.CornerRadius = UDim.new(0, 6)
+
+-- Status label
+local status = Instance.new("TextLabel", Main)
+status.Name = "Status"
+status.Size = UDim2.new(1, -24, 0, 20)
+status.Position = UDim2.new(0, 12, 0, 56)
+status.BackgroundTransparency = 1
+status.Text = "Pronto"
+status.Font = Enum.Font.Gotham
+status.TextSize = 13
+status.TextColor3 = Color3.fromRGB(200, 200, 200)
+status.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Separador estético
+local sep = Instance.new("Frame", Main)
+sep.Size = UDim2.new(1, -24, 0, 1)
+sep.Position = UDim2.new(0, 12, 0, 76)
+sep.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+sep.BorderSizePixel = 0
+
+-- Container de botões
+local Buttons = Instance.new("Frame", Main)
+Buttons.Size = UDim2.new(1, -24, 0, 74)
+Buttons.Position = UDim2.new(0, 12, 0, 86)
+Buttons.BackgroundTransparency = 1
+
+local function createButton(text, posX, posY)
+	local b = Instance.new("TextButton")
+	b.Parent = Buttons
+	b.Size = UDim2.fromOffset(150, 44)
+	b.Position = UDim2.fromOffset(posX, posY)
+	b.BackgroundColor3 = Color3.fromRGB(34, 34, 38)
+	b.BorderSizePixel = 0
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 14
+	b.Text = text
+	b.TextColor3 = Color3.fromRGB(240, 240, 240)
+	b.AutoButtonColor = true
+	local corner = Instance.new("UICorner", b)
+	corner.CornerRadius = UDim.new(0, 8)
+	local s = Instance.new("UIStroke", b)
+	s.Thickness = 1
+	s.Color = Color3.fromRGB(28,28,30)
+	return b
+end
+
+local saveIrBtn = createButton("Salvar / Ir", 0, 0)
+local proxToggleBtn = createButton("Prox: 0.1s (ON)", 170, 0)
+
+-- Emoji button (ficará visível quando Main estiver oculto)
+local emojiBtn = Instance.new("TextButton")
+emojiBtn.Name = "EmojiOpen"
+emojiBtn.Size = UDim2.fromOffset(46, 46)
+emojiBtn.Position = UDim2.new(0.02, 0, 0.9, 0)
+emojiBtn.AnchorPoint = Vector2.new(0, 1)
+emojiBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+emojiBtn.Text = "😹"
+emojiBtn.Font = Enum.Font.SourceSans
+emojiBtn.TextScaled = true
+emojiBtn.AutoButtonColor = true
+emojiBtn.Parent = ScreenGui
+local emojiCorner = Instance.new("UICorner", emojiBtn)
+emojiCorner.CornerRadius = UDim.new(0, 12)
+emojiBtn.Visible = true
+
+-- Parent seguro da GUI
+if not safeParentGui(ScreenGui) then
+	pcall(function() ScreenGui.Parent = player:WaitForChild("PlayerGui") end)
+end
+
+-- Estado
+local savedCFrame = nil
+local teleportDebounce = false
+local proxEnabled = true
+
+-- Utilitários
+local function setStatus(txt)
+	pcall(function() status.Text = tostring(txt) end)
+end
+
+local function getRootPart()
+	local char = player.Character
+	if not char then return nil end
+	return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+end
+
+-- Arrastar apenas pelas bordas
+local dragging = false
+local dragStart = Vector2.new()
+local startPos = Main.Position
+
+local function isInBorderArea(pos)
+	local ok1, absPos = pcall(function() return Main.AbsolutePosition end)
+	local ok2, absSize = pcall(function() return Main.AbsoluteSize end)
+	if not ok1 or not ok2 then return false end
+	local localPos = pos - absPos
+	if localPos.X < 0 or localPos.Y < 0 then return false end
+	if localPos.X <= BORDER_THICKNESS or localPos.X >= (absSize.X - BORDER_THICKNESS)
+		or localPos.Y <= BORDER_THICKNESS or localPos.Y >= (absSize.Y - BORDER_THICKNESS) then
+		return true
+	end
+	return false
+end
+
+Main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		local ok, pos = pcall(function() return input.Position end)
+		if not ok or not pos then return end
+		if isInBorderArea(pos) then
+			dragging = true
+			dragStart = pos
+			startPos = Main.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end
+end)
+
+Main.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local ok, pos = pcall(function() return input.Position end)
+		if not ok or not pos then return end
+		local delta = pos - dragStart
+		local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		if DRAG_TWEEN then
+			pcall(function()
+				TweenService:Create(Main, TweenInfo.new(DRAG_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = newPos}):Play()
+			end)
+		else
+			Main.Position = newPos
+		end
+	end
+end)
+
+-- Centraliza GUI na tela
+local function centerGui()
+	Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+end
+centerGui()
+
+-- Emoji abrir/fechar
+emojiBtn.Activated:Connect(function()
+	Main.Visible = true
+	emojiBtn.Visible = false
+	centerGui()
+end)
+
+closeBtn.Activated:Connect(function()
+	Main.Visible = false
+	emojiBtn.Visible = true
+end)
+
+-- Salvar / Ir (teleport)
+saveIrBtn.Activated:Connect(function()
+	local root = getRootPart()
+	if not root then
+		setStatus("Erro: personagem não encontrado")
+		return
+	end
+
+	if not savedCFrame then
+		local ok, err = pcall(function() savedCFrame = root.CFrame end)
+		if not ok then
+			setStatus("Falha ao salvar: "..tostring(err))
+			return
+		end
+		setStatus("Posição salva")
+		pcall(function() saveIrBtn.Text = "Ir para Posição" end)
+	else
+		if teleportDebounce then return end
+		teleportDebounce = true
+		setStatus("Teleportando...")
+		local success, err = pcall(function()
+			local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			if humanoid then humanoid.PlatformStand = true end
+			local target = savedCFrame + Vector3.new(0, 3, 0)
+			if root and root:IsA("BasePart") then
+				root.CFrame = target
+				pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+				pcall(function() if root.AssemblyLinearVelocity then root.AssemblyLinearVelocity = Vector3.new(0,0,0) end end)
+			end
+			delay(0.1, function() if humanoid then humanoid.PlatformStand = false end end)
+		end)
+		if not success then
+			setStatus("Erro ao teleportar: "..tostring(err))
+		else
+			setStatus("Teleport concluído")
+		end
+		wait(0.25)
+		teleportDebounce = false
+		-- Opcional: manter ou limpar savedCFrame. Mantive para reutilização.
+	end
+end)
+
+-- ProximityPrompt: forçar HoldDuration = PROX_HOLD
+local function setPromptHold(prompt)
+	if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+	local ok = pcall(function() prompt.HoldDuration = PROX_HOLD end)
+	return ok
+end
+
+local function applyToAllPrompts()
+	for _, obj in ipairs(game:GetDescendants()) do
+		if obj:IsA("ProximityPrompt") then
+			setPromptHold(obj)
+		end
+	end
+end
+
+-- Aplicações iniciais com retries (ajuda em jogos que criam prompts depois)
+spawn(function()
+	for i = 1, 6 do
+		pcall(applyToAllPrompts)
+		wait(0.5)
+	end
+end)
+
+game.DescendantAdded:Connect(function(desc)
+	if desc:IsA("ProximityPrompt") then
+		spawn(function()
+			for i = 1, 6 do
+				if setPromptHold(desc) then break end
+				wait(0.08)
+			end
+		end)
+	end
+end)
+
+-- Toggle botao Prox
+proxToggleBtn.Activated:Connect(function()
+	proxEnabled = not proxEnabled
+	if proxEnabled then
+		proxToggleBtn.Text = "Prox: 0.1s (ON)"
+		setStatus("Aplicando ProximityPrompts = 0.1s")
+		pcall(applyToAllPrompts)
+	else
+		proxToggleBtn.Text = "Prox: OFF"
+		setStatus("ProximityPrompts: função desligada")
+	end
+end)
+
+-- Teclas: Esc fecha, Enter abre
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		if input.KeyCode == Enum.KeyCode.Escape then
+			if Main.Visible then
+				Main.Visible = false
+				emojiBtn.Visible = true
+			end
+		elseif input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.KeypadEnter then
+			if not Main.Visible then
+				Main.Visible = true
+				emojiBtn.Visible = false
+				centerGui()
+			end
+		end
+	end
+end)
+
+-- Cleanup simples (quando PlayerGui for removido)
+player.AncestryChanged:Connect(function(_, parent)
+	if not parent then
+		-- nothing heavy to cleanup in this version
+	end
+end)
+
+-- Inicializar visibilidade e status
+Main.Visible = false
+emojiBtn.Visible = true
+setStatus("Ready - ProximityPrompts = 0.1s")
+
+-- Garantir que a GUI esteja parentada corretamente (ultima etapa)
+if not safeParentGui(ScreenGui) then
+	pcall(function() ScreenGui.Parent = player:WaitForChild("PlayerGui") end)
+end
+
+-- Fim
